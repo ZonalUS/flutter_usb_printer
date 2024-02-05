@@ -25,6 +25,9 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
+
+    namespace "com.usb_printer.flutter"
+
     compileSdkVersion 31
 
     sourceSets {
