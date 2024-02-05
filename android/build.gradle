@@ -27,7 +27,17 @@ apply plugin: 'kotlin-android'
 android {
 
     namespace "com.usb_printer.flutter"
-
+    
+     compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+    
     compileSdkVersion 31
 
     sourceSets {
