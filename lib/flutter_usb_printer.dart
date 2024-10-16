@@ -44,24 +44,36 @@ class FlutterUsbPrinter {
 
   /// [printText]
   /// print text
-  Future<bool?> printText(String text) async {
-    Map<String, dynamic> params = {"text": text};
+  Future<bool?> printText(int vendorId, int productId, String text) async {
+    Map<String, dynamic> params = {
+      "vendorId": vendorId,
+      "productId": productId,
+      "text": text
+    };
     final bool? result = await _channel.invokeMethod('printText', params);
     return result;
   }
 
   /// [printRawText]
   /// print raw text
-  Future<bool?> printRawText(String text) async {
-    Map<String, dynamic> params = {"raw": text};
+  Future<bool?> printRawText(int vendorId, int productId, String text) async {
+    Map<String, dynamic> params = {
+      "vendorId": vendorId,
+      "productId": productId,
+      "raw": text
+    };
     final bool? result = await _channel.invokeMethod('printRawText', params);
     return result;
   }
 
   /// [write]
   /// write data byte
-  Future<bool?> write(Uint8List data) async {
-    Map<String, dynamic> params = {"data": data};
+  Future<bool?> write(int vendorId, int productId, Uint8List data) async {
+    Map<String, dynamic> params = {
+      "vendorId": vendorId,
+      "productId": productId,
+      "data": data
+    };
     final bool? result = await _channel.invokeMethod('write', params);
     return result;
   }

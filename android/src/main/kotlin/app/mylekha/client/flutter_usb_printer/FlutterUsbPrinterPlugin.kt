@@ -47,16 +47,22 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
           close(result)
         }
         "printText" -> {
+          val vendorId = call.argument<Int>("vendorId")
+          val productId = call.argument<Int>("productId")
           val text = call.argument<String>("text")
-          printText(text, result)
+          printText(vendorId!!, productId!!, text, result)
         }
         "printRawText" -> {
+          val vendorId = call.argument<Int>("vendorId")
+          val productId = call.argument<Int>("productId")
           val raw = call.argument<String>("raw")
-          printRawText(raw, result)
+          printRawText(vendorId!!, productId!!, raw, result)
         }
         "write" -> {
+          val vendorId = call.argument<Int>("vendorId")
+          val productId = call.argument<Int>("productId")
           val data = call.argument<ByteArray>("data")
-          write(data, result)
+          write(vendorId!!, productId!!, data, result)
         }
         else -> {
           result.notImplemented()
@@ -103,19 +109,25 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
     result.success(true)
   }
 
-  private fun printText(text : String?, result  :Result) {
-    text?.let { adapter!!.printText(it) };
-    result.success(true);
+ private fun printText(vendorId: Int, productId: Int, text: String?, result: Result) {
+      text?.let {
+          val success = adapter!!.printText(vendorId, productId, it)
+          result.success(success)
+      } ?: result.error("ERROR", "Text cannot be null", null)
   }
 
-  private fun printRawText(base64Data: String?, result: Result) {
-    adapter!!.printRawText(base64Data!!)
-    result.success(true)
+  private fun printRawText(vendorId: Int, productId: Int, base64Data: String?, result: Result) {
+      base64Data?.let {
+          val success = adapter!!.printRawText(vendorId, productId, it)
+          result.success(success)
+      } ?: result.error("ERROR", "Base64 data cannot be null", null)
   }
 
-  private fun write(bytes: ByteArray?, result: Result) {
-    bytes?.let { adapter!!.write(it) }
-    result.success(true)
+  private fun write(vendorId: Int, productId: Int, bytes: ByteArray?, result: Result) {
+      bytes?.let {
+          val success = adapter!!.write(vendorId, productId, it)
+          result.success(success)
+      } ?: result.error("ERROR", "Bytes cannot be null", null)
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
