@@ -70,6 +70,7 @@ class USBPrinterAdapter {
             if (printerConnections.containsKey(key)) {
                 Toast.makeText(context, "USB device disconnected: $key", Toast.LENGTH_LONG).show()
                 closeConnection(key)
+                printerConnections.remove(key)
             }
         }
     }
