@@ -77,4 +77,43 @@ class FlutterUsbPrinter {
     final bool? result = await _channel.invokeMethod('write', params);
     return result;
   }
+
+  Future<String?> getPrinterSerial(int vendorId, int productId) async {
+    try {
+      final String? serialNumber =
+          await _channel.invokeMethod('getPrinterSerial', {
+        'vendorId': vendorId,
+        'productId': productId,
+      });
+      return serialNumber;
+    } on PlatformException catch (e) {
+      print("Error getting serial number: ${e.message}");
+      return null;
+    }
+  }
+
+  // Test both printers
+  Future<Map<String, dynamic>> testBothPrinters(
+      int vendorId, int productId) async {
+    print("=== PRINTER 1 ===");
+    final info1 = await _channel.invokeMethod('testAllPrinterInfo', {
+      'vendorId': vendorId,
+      'productId': productId,
+    });
+    return (info1);
+  }
+
+  Future<String?> getPrinterStatus(int vendorId, int productId) async {
+    try {
+      final String? status =
+          await _channel.invokeMethod('getPrinterStatus', {
+        'vendorId': vendorId,
+        'productId': productId,
+      });
+      return status;
+    } on PlatformException catch (e) {
+      print("Error getting serial number: ${e.message}");
+      return null;
+    }
+  }
 }

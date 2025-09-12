@@ -50,7 +50,7 @@ class _MyAppState extends State<MyApp> {
     try {
       var data = Uint8List.fromList(
           utf8.encode(" Hello world Testing ESC POS printer..."));
-      await flutterUsbPrinter.write(data);
+     // await flutterUsbPrinter.write(data);
       // await FlutterUsbPrinter.printRawData("text");
       // await FlutterUsbPrinter.printText("Testing ESC POS printer...");
     } on PlatformException {
