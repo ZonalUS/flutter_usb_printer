@@ -64,6 +64,23 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
           val data = call.argument<ByteArray>("data")
           write(vendorId!!, productId!!, data, result)
         }
+        "getPrinterSerial" -> {
+            val vendorId = call.argument<Int>("vendorId")
+            val productId = call.argument<Int>("productId")
+            getPrinterSerial(vendorId!!, productId!!, result)
+        }
+        "testAllPrinterInfo" -> {
+        val vendorId = call.argument<Int>("vendorId")
+        val productId = call.argument<Int>("productId")
+        testAllPrinterInfo(vendorId!!, productId!!, result)
+        }
+        "getPrinterStatus" -> {
+        val vendorId = call.argument<Int>("vendorId")
+        val productId = call.argument<Int>("productId")
+        getPrinterStatus(vendorId!!, productId!!, result)
+        }
+
+        
         else -> {
           result.notImplemented()
         }
@@ -153,5 +170,34 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
   override fun onDetachedFromActivity() {
     // This call will be followed by onDetachedFromActivity().
     print("onDetachedFromActivity")
+  }
+
+
+  private fun getPrinterSerial(vendorId: Int, productId: Int, result: Result) {
+    adapter!!.getPrinterSerial(vendorId, productId) { serialNumber ->
+        // This callback runs on a background thread, so we need to run the result on main thread
+        activity.runOnUiThread {
+            if (serialNumber != null) {
+                result.success(serialNumber)
+            } else {
+                result.error("SERIAL_ERROR", "Could not retrieve printer serial number", null)
+            }
+        }
+    }
+  }
+
+  private fun testAllPrinterInfo(vendorId: Int, productId: Int, result: Result) {
+    adapter!!.testAllPrinterInfo(vendorId, productId) { info ->
+        activity.runOnUiThread {
+            result.success(info)
+        }
+    }
+  }
+  private fun getPrinterStatus(vendorId: Int, productId: Int, result: Result) {
+    adapter!!.getPrinterStatus(vendorId, productId) { status ->
+        activity.runOnUiThread {
+            result.success(status)
+        }
+    }
   }
 }
