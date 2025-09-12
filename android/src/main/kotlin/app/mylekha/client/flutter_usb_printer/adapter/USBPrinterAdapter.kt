@@ -224,7 +224,7 @@ class USBPrinterAdapter {
             }.start()
             return true  // The thread has been started, assume success
         } else {
-            Log.e(LOG_TAG, "Printer not connected: $key")
+            //Log.e(LOG_TAG, "Printer not connected: $key")
             return false
         }
     }
