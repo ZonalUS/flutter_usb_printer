@@ -85,12 +85,14 @@ class FlutterUsbPrinter {
     return result;
   }
 
-  Future<String?> getPrinterSerial(int vendorId, int productId) async {
+  Future<String?> getPrinterSerial(
+      int vendorId, int productId, String? serial) async {
     try {
       final String? serialNumber =
           await _channel.invokeMethod('getPrinterSerial', {
         'vendorId': vendorId,
         'productId': productId,
+        "serialNumber": serial,
       });
       return serialNumber;
     } on PlatformException catch (e) {
