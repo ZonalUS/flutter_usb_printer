@@ -12,6 +12,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import android.util.Log
 
 
 
@@ -41,7 +42,8 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
         "connect" -> {
           val vendorId = call.argument<Int>("vendorId")
           val productId = call.argument<Int>("productId")
-          connect(vendorId!!, productId!!, result)
+          val serialNumber = call.argument<String>("serialNumber") // Optional parameter
+          connect(vendorId!!, productId!!, serialNumber, result)
         }
         "close" -> {
           close(result)
@@ -49,35 +51,40 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
         "printText" -> {
           val vendorId = call.argument<Int>("vendorId")
           val productId = call.argument<Int>("productId")
+          val serialNumber = call.argument<String>("serialNumber") // Optional parameter
           val text = call.argument<String>("text")
-          printText(vendorId!!, productId!!, text, result)
+          printText(vendorId!!, productId!!, serialNumber, text, result)
         }
         "printRawText" -> {
           val vendorId = call.argument<Int>("vendorId")
           val productId = call.argument<Int>("productId")
+          val serialNumber = call.argument<String>("serialNumber") // Optional parameter
           val raw = call.argument<String>("raw")
-          printRawText(vendorId!!, productId!!, raw, result)
+          printRawText(vendorId!!, productId!!, serialNumber, raw, result)
         }
         "write" -> {
           val vendorId = call.argument<Int>("vendorId")
           val productId = call.argument<Int>("productId")
+          val serialNumber = call.argument<String>("serialNumber") // Optional parameter
           val data = call.argument<ByteArray>("data")
-          write(vendorId!!, productId!!, data, result)
+          write(vendorId!!, productId!!, serialNumber, data, result)
         }
         "getPrinterSerial" -> {
             val vendorId = call.argument<Int>("vendorId")
             val productId = call.argument<Int>("productId")
-            getPrinterSerial(vendorId!!, productId!!, result)
+             val serialNumber = call.argument<String>("serialNumber") // Op
+          
+            getPrinterSerial(vendorId!!, productId!!, serialNumber, result)
         }
         "testAllPrinterInfo" -> {
         val vendorId = call.argument<Int>("vendorId")
         val productId = call.argument<Int>("productId")
-        testAllPrinterInfo(vendorId!!, productId!!, result)
+       // testAllPrinterInfo(vendorId!!, productId!!, result)
         }
         "getPrinterStatus" -> {
         val vendorId = call.argument<Int>("vendorId")
         val productId = call.argument<Int>("productId")
-        getPrinterStatus(vendorId!!, productId!!, result)
+      //  getPrinterStatus(vendorId!!, productId!!, result)
         }
 
         
@@ -93,6 +100,8 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
     val list = ArrayList<HashMap<String, String?>>()
     for (usbDevice in usbDevices) {
       val deviceMap: HashMap<String, String?> = HashMap()
+
+        Log.d("USB_DEBUG", "USB Device: $usbDevice")
       deviceMap["deviceName"] = usbDevice.deviceName
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
         deviceMap["manufacturer"] = usbDevice.manufacturerName
@@ -104,6 +113,13 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
       }else{
         deviceMap["productName"] = "unknown";
       }
+
+       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            deviceMap["serial_number"] = usbDevice.serialNumber ?: "unknown"
+            Log.d("USB_DEBUG", "Serial Number: ${usbDevice.serialNumber}")
+        } else {
+            deviceMap["serialNumber"] = "not_available"
+        }
       deviceMap["deviceId"] = Integer.toString(usbDevice.deviceId)
       deviceMap["vendorId"] = Integer.toString(usbDevice.vendorId)
       deviceMap["productId"] = Integer.toString(usbDevice.productId)
@@ -113,8 +129,8 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
     result.success(list)
   }
 
-  private fun connect(vendorId: Int, productId: Int, result: Result) {
-    if (!adapter!!.selectDevice(vendorId!!, productId!!)) {
+  private fun connect(vendorId: Int, productId: Int, serialNumber: String?, result: Result) {
+    if (!adapter!!.selectDevice(vendorId, productId, serialNumber)) {
       result.success(false)
     } else {
       result.success(true)
@@ -126,25 +142,39 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
     result.success(true)
   }
 
- private fun printText(vendorId: Int, productId: Int, text: String?, result: Result) {
+  private fun printText(vendorId: Int, productId: Int, serialNumber: String?, text: String?, result: Result) {
       text?.let {
-          val success = adapter!!.printText(vendorId, productId, it)
+          val success = adapter!!.printText(vendorId, productId, serialNumber, it)
           result.success(success)
       } ?: result.error("ERROR", "Text cannot be null", null)
   }
 
-  private fun printRawText(vendorId: Int, productId: Int, base64Data: String?, result: Result) {
+  private fun printRawText(vendorId: Int, productId: Int, serialNumber: String?, base64Data: String?, result: Result) {
       base64Data?.let {
-          val success = adapter!!.printRawText(vendorId, productId, it)
+          val success = adapter!!.printRawText(vendorId, productId, serialNumber, it)
           result.success(success)
       } ?: result.error("ERROR", "Base64 data cannot be null", null)
   }
 
-  private fun write(vendorId: Int, productId: Int, bytes: ByteArray?, result: Result) {
-      bytes?.let {
-          val success = adapter!!.write(vendorId, productId, it)
-          result.success(success)
-      } ?: result.error("ERROR", "Bytes cannot be null", null)
+ private fun write(vendorId: Int, productId: Int, serialNumber: String?, bytes: ByteArray?, result: Result) {
+    Log.i("DEBUG", "Plugin write called with: vendorId=$vendorId, productId=$productId, serial=$serialNumber")
+    bytes?.let {
+        val success = adapter!!.write(vendorId, productId, serialNumber, it)
+        result.success(success)
+    } ?: result.error("ERROR", "Bytes cannot be null", null)
+}
+
+   private fun getPrinterSerial(vendorId: Int, productId: Int, serial: String?,  result: Result) {
+    adapter!!.getPrinterSerial(vendorId, productId ,serial) { serialNumber ->
+        // This callback runs on a background thread, so we need to run the result on main thread
+        activity.runOnUiThread {
+            if (serialNumber != null) {
+                result.success(serialNumber)
+            } else {
+                result.error("SERIAL_ERROR", "Could not retrieve printer serial number", null)
+            }
+        }
+    }
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
@@ -172,32 +202,13 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
     print("onDetachedFromActivity")
   }
 
-
-  private fun getPrinterSerial(vendorId: Int, productId: Int, result: Result) {
-    adapter!!.getPrinterSerial(vendorId, productId) { serialNumber ->
-        // This callback runs on a background thread, so we need to run the result on main thread
-        activity.runOnUiThread {
-            if (serialNumber != null) {
-                result.success(serialNumber)
-            } else {
-                result.error("SERIAL_ERROR", "Could not retrieve printer serial number", null)
-            }
-        }
-    }
-  }
-
-  private fun testAllPrinterInfo(vendorId: Int, productId: Int, result: Result) {
-    adapter!!.testAllPrinterInfo(vendorId, productId) { info ->
-        activity.runOnUiThread {
-            result.success(info)
-        }
-    }
-  }
-  private fun getPrinterStatus(vendorId: Int, productId: Int, result: Result) {
-    adapter!!.getPrinterStatus(vendorId, productId) { status ->
-        activity.runOnUiThread {
-            result.success(status)
-        }
-    }
-  }
+  // private fun testAllPrinterInfo(vendorId: Int, productId: Int, result: Result) {
+  //   adapter!!.testAllPrinterInfo(vendorId, productId) { info ->
+  //       activity.runOnUiThread {
+  //           result.success(info)
+  //       }
+  //   }
+  // }
+  
+ 
 }

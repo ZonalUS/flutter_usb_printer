@@ -26,10 +26,11 @@ class FlutterUsbPrinter {
 
   /// [connect]
   /// connect to a printer vai vendorId and productId
-  Future<bool?> connect(int vendorId, int productId) async {
+  Future<bool?> connect(int vendorId, int productId, String serial) async {
     Map<String, dynamic> params = {
       "vendorId": vendorId,
-      "productId": productId
+      "productId": productId,
+      "serialNumber": serial,
     };
     final bool? result = await _channel.invokeMethod('connect', params);
     return result;
@@ -44,7 +45,11 @@ class FlutterUsbPrinter {
 
   /// [printText]
   /// print text
-  Future<bool?> printText(int vendorId, int productId, String text) async {
+  Future<bool?> printText(
+    int vendorId,
+    int productId,
+    String text,
+  ) async {
     Map<String, dynamic> params = {
       "vendorId": vendorId,
       "productId": productId,
@@ -68,10 +73,12 @@ class FlutterUsbPrinter {
 
   /// [write]
   /// write data byte
-  Future<bool?> write(int vendorId, int productId, Uint8List data) async {
+  Future<bool?> write(
+      int vendorId, int productId, Uint8List data, String serial) async {
     Map<String, dynamic> params = {
       "vendorId": vendorId,
       "productId": productId,
+      "serialNumber": serial,
       "data": data
     };
     final bool? result = await _channel.invokeMethod('write', params);
@@ -92,21 +99,25 @@ class FlutterUsbPrinter {
     }
   }
 
-  // Test both printers
   Future<Map<String, dynamic>> testBothPrinters(
       int vendorId, int productId) async {
-    print("=== PRINTER 1 ===");
-    final info1 = await _channel.invokeMethod('testAllPrinterInfo', {
-      'vendorId': vendorId,
-      'productId': productId,
-    });
-    return (info1);
+    try {
+      final result = await _channel.invokeMethod('testAllPrinterInfo', {
+        'vendorId': vendorId,
+        'productId': productId,
+      });
+
+      // Convert to the expected type
+      return Map<String, dynamic>.from(result ?? {});
+    } catch (e) {
+      print('Platform error: $e');
+      return <String, dynamic>{};
+    }
   }
 
   Future<String?> getPrinterStatus(int vendorId, int productId) async {
     try {
-      final String? status =
-          await _channel.invokeMethod('getPrinterStatus', {
+      final String? status = await _channel.invokeMethod('getPrinterStatus', {
         'vendorId': vendorId,
         'productId': productId,
       });
