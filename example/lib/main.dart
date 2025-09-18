@@ -32,10 +32,10 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
-  _connect(int vendorId, int productId) async {
+  _connect(int vendorId, int productId, String serial) async {
     bool? returned = false;
     try {
-      returned = await flutterUsbPrinter.connect(vendorId, productId);
+      returned = await flutterUsbPrinter.connect(vendorId, productId, serial);
     } on PlatformException {
       //response = 'Failed to get platform version.';
     }
@@ -50,7 +50,7 @@ class _MyAppState extends State<MyApp> {
     try {
       var data = Uint8List.fromList(
           utf8.encode(" Hello world Testing ESC POS printer..."));
-     // await flutterUsbPrinter.write(data);
+      // await flutterUsbPrinter.write(data);
       // await FlutterUsbPrinter.printRawData("text");
       // await FlutterUsbPrinter.printText("Testing ESC POS printer...");
     } on PlatformException {
@@ -92,7 +92,7 @@ class _MyAppState extends State<MyApp> {
         .map((device) => new ListTile(
               onTap: () {
                 _connect(int.parse(device['vendorId']),
-                    int.parse(device['productId']));
+                    int.parse(device['productId']), '');
               },
               leading: new Icon(Icons.usb),
               title: new Text(
