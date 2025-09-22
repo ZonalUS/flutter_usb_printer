@@ -26,7 +26,7 @@ class FlutterUsbPrinter {
 
   /// [connect]
   /// connect to a printer vai vendorId and productId
-  Future<bool?> connect(int vendorId, int productId, String serial) async {
+  Future<bool?> connect(int vendorId, int productId, String? serial) async {
     Map<String, dynamic> params = {
       "vendorId": vendorId,
       "productId": productId,
