@@ -73,7 +73,16 @@ class USBPrinterAdapter {
             val usbDevice = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE) ?: return
 
             Log.i(LOG_TAG, "onReceive called with action: $action")
-            val key = if (usbDevice.productName?.startsWith("POS Receipt Printer") == true) {
+
+            // First check if we already have this printer in discoveredPrinters with a serial key
+            // This preserves the serial that was set by getPrinterSerial
+            val existingKey = findPrinterKey(usbDevice.vendorId, usbDevice.productId)
+
+            val key = if (existingKey != null && existingKey.contains(":") && existingKey.split(":").size > 2) {
+                // Use existing key with serial from discoveredPrinters
+                Log.i(LOG_TAG, "Using existing key from discoveredPrinters: $existingKey")
+                existingKey
+            } else if (usbDevice.productName?.startsWith("POS Receipt Printer") == true) {
                 // Use USB serial for POS Receipt Printers
                 val usbSerial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     usbDevice.serialNumber
@@ -86,7 +95,7 @@ class USBPrinterAdapter {
                 getPrinterKey(usbDevice.vendorId, usbDevice.productId)
             }
 
-                
+
     Log.i(LOG_TAG, "Generated key: $key for device: ${usbDevice.productName}")
             
             if (ACTION_USB_PERMISSION == action) {
@@ -355,7 +364,31 @@ class USBPrinterAdapter {
     Log.i(LOG_TAG, "Key exists in printerConnections: ${printerConnections.containsKey(key)}")
     Log.i(LOG_TAG, "Key exists in discoveredPrinters: ${discoveredPrinters.containsKey(key)}")
     
-    val printer = printerConnections[key] ?: return false
+   var printer = printerConnections[key]
+  if (printer == null && discoveredPrinters.containsKey(key)) {
+      val discovered = discoveredPrinters[key]
+      if (discovered != null) {
+          val usbInterface = discovered.usbDevice.getInterface(0)
+          for (i in 0 until usbInterface.endpointCount) {
+              val ep = usbInterface.getEndpoint(i)
+              if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK && ep.direction == UsbConstants.USB_DIR_OUT) {
+                  val connection = mUSBManager?.openDevice(discovered.usbDevice)
+                  if (connection != null && connection.claimInterface(usbInterface, true)) {
+                      printer = PrinterConnection(
+                          usbDevice = discovered.usbDevice,
+                          usbDeviceConnection = connection,
+                          usbInterface = usbInterface,
+                          endPoint = ep
+                      )
+                      printerConnections[key] = printer!!
+                      Log.i(LOG_TAG, "Auto-connected from discoveredPrinters for key: $key")
+                      break
+                  }
+              }
+          }
+      }
+  }
+  if (printer == null) return false
     Log.i(LOG_TAG, "Printer connection details: connection=${printer.usbDeviceConnection}, endpoint=${printer.endPoint}")
         
 
