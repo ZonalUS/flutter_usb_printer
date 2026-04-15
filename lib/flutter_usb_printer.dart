@@ -85,6 +85,18 @@ class FlutterUsbPrinter {
     return result;
   }
 
+  /// Discover ESC/POS serials for all USB printers that don't have a USB serial.
+  /// Returns a map of "vendorId:productId" -> serial for each discovered printer.
+  Future<Map<String, String>> discoverAllSerials() async {
+    try {
+      final result = await _channel.invokeMethod('discoverAllSerials');
+      return Map<String, String>.from(result ?? {});
+    } on PlatformException catch (e) {
+      print("Error discovering serials: ${e.message}");
+      return {};
+    }
+  }
+
   Future<String?> getPrinterSerial(
       int vendorId, int productId, String? serial) async {
     try {

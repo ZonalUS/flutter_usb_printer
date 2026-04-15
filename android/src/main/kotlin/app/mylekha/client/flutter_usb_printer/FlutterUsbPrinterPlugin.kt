@@ -73,8 +73,11 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
             val vendorId = call.argument<Int>("vendorId")
             val productId = call.argument<Int>("productId")
              val serialNumber = call.argument<String>("serialNumber") // Op
-          
+
             getPrinterSerial(vendorId!!, productId!!, serialNumber, result)
+        }
+        "discoverAllSerials" -> {
+            discoverAllSerials(result)
         }
         "testAllPrinterInfo" -> {
         val vendorId = call.argument<Int>("vendorId")
@@ -95,38 +98,48 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
   }
 
   private fun getUSBDeviceList(result: Result) {
-
     val usbDevices = adapter!!.getDeviceList()
-    val list = ArrayList<HashMap<String, String?>>()
-    for (usbDevice in usbDevices) {
-      val deviceMap: HashMap<String, String?> = HashMap()
 
-        Log.d("USB_DEBUG", "USB Device: $usbDevice")
-      deviceMap["deviceName"] = usbDevice.deviceName
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-        deviceMap["manufacturer"] = usbDevice.manufacturerName
-      }else{
-        deviceMap["manufacturer"] = "unknown";
-      }
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-        deviceMap["productName"] = usbDevice.productName
-      }else{
-        deviceMap["productName"] = "unknown";
-      }
+    // Discover ESC/POS serials for printers without USB serial, then return full list
+    adapter!!.discoverAllSerials { serials ->
+      activity.runOnUiThread {
+        val list = ArrayList<HashMap<String, String?>>()
+        for (usbDevice in usbDevices) {
+          val deviceMap: HashMap<String, String?> = HashMap()
 
-       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            deviceMap["serial_number"] = usbDevice.serialNumber ?: "unknown"
-            Log.d("USB_DEBUG", "Serial Number: ${usbDevice.serialNumber}")
-        } else {
-            deviceMap["serialNumber"] = "not_available"
+          Log.d("USB_DEBUG", "USB Device: $usbDevice")
+          deviceMap["deviceName"] = usbDevice.deviceName
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            deviceMap["manufacturer"] = usbDevice.manufacturerName
+          } else {
+            deviceMap["manufacturer"] = "unknown"
+          }
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            deviceMap["productName"] = usbDevice.productName
+          } else {
+            deviceMap["productName"] = "unknown"
+          }
+
+          val deviceId = Integer.toString(usbDevice.deviceId)
+
+          // Use ESC/POS serial if discovered, otherwise USB serial, otherwise unknown
+          val escPosSerial = serials[deviceId]
+          val usbSerial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            usbDevice.serialNumber
+          } else {
+            null
+          }
+          deviceMap["serial_number"] = escPosSerial ?: usbSerial ?: "unknown"
+          Log.d("USB_DEBUG", "Serial Number: ${deviceMap["serial_number"]} (ESC/POS: $escPosSerial, USB: $usbSerial)")
+
+          deviceMap["deviceId"] = deviceId
+          deviceMap["vendorId"] = Integer.toString(usbDevice.vendorId)
+          deviceMap["productId"] = Integer.toString(usbDevice.productId)
+          list.add(deviceMap)
         }
-      deviceMap["deviceId"] = Integer.toString(usbDevice.deviceId)
-      deviceMap["vendorId"] = Integer.toString(usbDevice.vendorId)
-      deviceMap["productId"] = Integer.toString(usbDevice.productId)
-      list.add(deviceMap)
-      print("usbDevice ${usbDevice}");
+        result.success(list)
+      }
     }
-    result.success(list)
   }
 
   private fun connect(vendorId: Int, productId: Int, serialNumber: String?, result: Result) {
@@ -173,6 +186,14 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
             } else {
                 result.error("SERIAL_ERROR", "Could not retrieve printer serial number", null)
             }
+        }
+    }
+  }
+
+  private fun discoverAllSerials(result: Result) {
+    adapter!!.discoverAllSerials { serials ->
+        activity.runOnUiThread {
+            result.success(serials)
         }
     }
   }

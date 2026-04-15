@@ -72,64 +72,79 @@ class USBPrinterAdapter {
             val action = intent.action
             val usbDevice = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE) ?: return
 
-            Log.i(LOG_TAG, "onReceive called with action: $action")
+            Log.i(LOG_TAG, "onReceive: action=$action, deviceId=${usbDevice.deviceId}, vendor=${usbDevice.vendorId}, product=${usbDevice.productId}")
 
-            // First check if we already have this printer in discoveredPrinters with a serial key
-            // This preserves the serial that was set by getPrinterSerial
-            val existingKey = findPrinterKey(usbDevice.vendorId, usbDevice.productId)
+            if (ACTION_USB_PERMISSION == action) {
+                // Find key by deviceId (still valid during permission callback)
+                val key = findKeyByDeviceId(usbDevice.deviceId)
+                    ?: getPrinterKey(usbDevice.vendorId, usbDevice.productId)
 
-            val key = if (existingKey != null && existingKey.contains(":") && existingKey.split(":").size > 2) {
-                // Use existing key with serial from discoveredPrinters
-                Log.i(LOG_TAG, "Using existing key from discoveredPrinters: $existingKey")
-                existingKey
-            } else if (usbDevice.productName?.startsWith("POS Receipt Printer") == true) {
-                // Use USB serial for POS Receipt Printers
+                if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                    Log.i(LOG_TAG, "Permission granted for device: $key")
+                    printerConnections[key] = PrinterConnection(usbDevice, null, null, null)
+
+                    val keyParts = key.split(":")
+                    val serialNumber = if (keyParts.size > 2 && !keyParts[2].startsWith("dev")) keyParts[2] else null
+
+                    Log.i(LOG_TAG, "Calling openConnection with serial: $serialNumber")
+                    val success = openConnection(usbDevice.vendorId, usbDevice.productId, serialNumber)
+                    Log.i(LOG_TAG, "openConnection result: $success")
+                } else {
+                    Toast.makeText(context, "Permission denied for $key", Toast.LENGTH_LONG).show()
+                }
+            } else if (UsbManager.ACTION_USB_DEVICE_DETACHED == action) {
+                // Find the exact entry by deviceId (still valid at detach time)
+                val key = findKeyByDeviceId(usbDevice.deviceId)
+                if (key != null) {
+                    if (printerConnections.containsKey(key)) {
+                        Toast.makeText(context, "USB device disconnected: $key", Toast.LENGTH_LONG).show()
+                        closeConnection(key)
+                        printerConnections.remove(key)
+                    }
+                    discoveredPrinters.remove(key)
+                    Log.i(LOG_TAG, "Detached: Removed device with key: $key (deviceId=${usbDevice.deviceId})")
+                } else {
+                    Log.w(LOG_TAG, "Detached: No matching entry for deviceId=${usbDevice.deviceId}")
+                }
+            } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED == action) {
+                // Assign temp key with new deviceId — serial will be discovered later
                 val usbSerial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     usbDevice.serialNumber
                 } else {
                     null
                 }
-                getPrinterKey(usbDevice.vendorId, usbDevice.productId, usbSerial)
-            } else {
-                // Use basic key for other printers (will be updated later)
-                getPrinterKey(usbDevice.vendorId, usbDevice.productId)
-            }
 
-
-    Log.i(LOG_TAG, "Generated key: $key for device: ${usbDevice.productName}")
-            
-            if (ACTION_USB_PERMISSION == action) {
-                if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                    Log.i(LOG_TAG, "Permission granted for device: $key")
-                    printerConnections[key] = PrinterConnection(usbDevice, null, null, null)
-
-                       // Extract serial from the key  
-                    val keyParts = key.split(":")
-                    val serialNumber = if (keyParts.size > 2) keyParts[2] else null
-
-                    Log.i(LOG_TAG, "Calling openConnection with serial: $serialNumber")
-    
-            val success = openConnection(usbDevice.vendorId, usbDevice.productId, serialNumber)
-                                Log.i(LOG_TAG, "openConnection result: $success")
-
+                val key = if (usbSerial != null && usbSerial.isNotEmpty()) {
+                    getPrinterKey(usbDevice.vendorId, usbDevice.productId, usbSerial)
                 } else {
-                    Toast.makeText(context, "Permission denied for $key", Toast.LENGTH_LONG).show()
+                    "${usbDevice.vendorId}:${usbDevice.productId}:dev${usbDevice.deviceId}"
                 }
-            } else if (UsbManager.ACTION_USB_DEVICE_DETACHED == action) {
-                // Remove from both collections
-                if (printerConnections.containsKey(key)) {
-                    Toast.makeText(context, "USB device disconnected: $key", Toast.LENGTH_LONG).show()
-                    closeConnection(key)
-                    printerConnections.remove(key)
-                }
-                discoveredPrinters.remove(key)
-                Log.i(LOG_TAG, "Removed device from discovered printers: $key")
-            } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED == action) {
-                // Add newly attached devices to discovered printers as PrinterConnection
+
                 discoveredPrinters[key] = PrinterConnection(usbDevice, null, null, null)
-                Log.i(LOG_TAG, "Added attached device to discovered printers: $key")
+                Log.i(LOG_TAG, "Attached: Added device with key: $key (deviceId=${usbDevice.deviceId})")
+
+                // Auto-discover serial for newly attached device if it has a temp key
+                if (key.contains(":dev")) {
+                    Log.i(LOG_TAG, "Attached: Auto-discovering serial for $key")
+                    discoverAllSerials { serials ->
+                        Log.i(LOG_TAG, "Attached: Serial discovery complete: $serials")
+                    }
+                }
             }
         }
+    }
+
+    /// Find a discoveredPrinters/printerConnections key by USB deviceId
+    private fun findKeyByDeviceId(deviceId: Int): String? {
+        // Check discoveredPrinters first
+        discoveredPrinters.entries.find { it.value.usbDevice.deviceId == deviceId }?.let {
+            return it.key
+        }
+        // Check printerConnections
+        printerConnections.entries.find { it.value.usbDevice.deviceId == deviceId }?.let {
+            return it.key
+        }
+        return null
     }
 
     fun init(reactContext: Context?) {
@@ -180,29 +195,171 @@ class USBPrinterAdapter {
             ).show()
             return emptyList()
         }
-        
+
         val devices = ArrayList(mUSBManager!!.deviceList.values)
-        
-        // Store discovered printers with appropriate keys based on printer type
+
+        // Store discovered printers with appropriate keys
+        // Printers with USB serial get full key: vendorId:productId:serial
+        // Printers without USB serial get temporary key: vendorId:productId:deviceId
+        // deviceId is unique per USB port, so duplicate models won't collide
         devices.forEach { device ->
-            val key = if (device.productName?.startsWith("POS Receipt Printer") == true) {
-                // Type A: Use USB serial immediately for POS Receipt Printers
-                val usbSerial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    device.serialNumber
-                } else {
-                    null
-                }
-                getPrinterKey(device.vendorId, device.productId, usbSerial)
+            val usbSerial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                device.serialNumber
             } else {
-                // Type B: Basic key for now, will update later when ESC/POS serial is retrieved
-                getPrinterKey(device.vendorId, device.productId)
+                null
             }
-            
-            discoveredPrinters[key] = PrinterConnection(device, null, null, null)
-            Log.i(LOG_TAG, "Discovered printer: ${device.productName} with key: $key")
+
+            if (usbSerial != null && usbSerial.isNotEmpty()) {
+                // Has USB serial — use it directly
+                val key = getPrinterKey(device.vendorId, device.productId, usbSerial)
+                discoveredPrinters[key] = PrinterConnection(device, null, null, null)
+                Log.i(LOG_TAG, "Discovered printer: ${device.productName} with key: $key (USB serial)")
+            } else {
+                // No USB serial — check if we already have an ESC/POS serial key for this specific device
+                val existingKey = discoveredPrinters.entries.find { (_, conn) ->
+                    conn.usbDevice.deviceId == device.deviceId
+                }?.key
+
+                if (existingKey != null) {
+                    // Preserve existing key, update device reference
+                    discoveredPrinters[existingKey] = PrinterConnection(device, null, null, null)
+                    Log.i(LOG_TAG, "Preserving key: $existingKey for deviceId=${device.deviceId}")
+                } else {
+                    // Use deviceId as temporary differentiator
+                    val tempKey = "${device.vendorId}:${device.productId}:dev${device.deviceId}"
+                    discoveredPrinters[tempKey] = PrinterConnection(device, null, null, null)
+                    Log.i(LOG_TAG, "Discovered printer: ${device.productName} with temp key: $tempKey (no serial yet)")
+                }
+            }
         }
-        
+
         return devices
+    }
+
+    /**
+     * Discover ESC/POS serials for all printers that don't have a serial in their key.
+     * This temporarily connects to each printer, sends the ESC/POS serial command,
+     * and upgrades the discovery key with the serial.
+     */
+    fun discoverAllSerials(callback: (Map<String, String>) -> Unit) {
+        Thread {
+            // Results keyed by deviceId so duplicate vendorId:productId printers don't collide
+            val results = mutableMapOf<String, String>() // "deviceId" -> serial
+
+            // Include printers that already have serial keys (from previous session)
+            discoveredPrinters.entries.filter { (key, _) ->
+                !key.contains(":dev") && key.split(":").size > 2
+            }.forEach { (key, printer) ->
+                val serial = key.split(":").drop(2).joinToString(":")
+                results[printer.usbDevice.deviceId.toString()] = serial
+                Log.i(LOG_TAG, "discoverAllSerials: Already known serial for deviceId=${printer.usbDevice.deviceId}: $serial")
+            }
+
+            // Find printers with temporary keys (contain "dev" prefix = no serial yet)
+            val printersNeedingSerial = discoveredPrinters.entries.filter { (key, _) ->
+                key.contains(":dev") // Temp keys have format vendorId:productId:devXXX
+            }.toList()
+
+            Log.i(LOG_TAG, "discoverAllSerials: ${printersNeedingSerial.size} printers need serial discovery")
+
+            for ((key, printer) in printersNeedingSerial) {
+                var tempConnection: UsbDeviceConnection? = null
+                var tempInterface: UsbInterface? = null
+
+                try {
+                    if (mUSBManager == null) continue
+                    if (!mUSBManager!!.hasPermission(printer.usbDevice)) {
+                        Log.i(LOG_TAG, "discoverAllSerials: No permission for $key, requesting...")
+                        mUSBManager!!.requestPermission(printer.usbDevice, mPermissionIntent)
+                        Thread.sleep(2000) // Wait for permission dialog
+                        if (!mUSBManager!!.hasPermission(printer.usbDevice)) {
+                            Log.i(LOG_TAG, "discoverAllSerials: Permission denied for $key, skipping")
+                            continue
+                        }
+                    }
+
+                    tempConnection = mUSBManager!!.openDevice(printer.usbDevice)
+                    if (tempConnection == null) {
+                        Log.e(LOG_TAG, "discoverAllSerials: Failed to open device $key")
+                        continue
+                    }
+
+                    tempInterface = printer.usbDevice.getInterface(0)
+                    if (!tempConnection.claimInterface(tempInterface, true)) {
+                        Log.e(LOG_TAG, "discoverAllSerials: Failed to claim interface $key")
+                        tempConnection.close()
+                        continue
+                    }
+
+                    var outEndpoint: UsbEndpoint? = null
+                    for (i in 0 until tempInterface.endpointCount) {
+                        val ep = tempInterface.getEndpoint(i)
+                        if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK && ep.direction == UsbConstants.USB_DIR_OUT) {
+                            outEndpoint = ep
+                            break
+                        }
+                    }
+
+                    if (outEndpoint == null) {
+                        Log.e(LOG_TAG, "discoverAllSerials: No OUT endpoint for $key")
+                        tempConnection.releaseInterface(tempInterface)
+                        tempConnection.close()
+                        continue
+                    }
+
+                    // Temporarily set connection details for readSyncLikeSDK
+                    printer.usbDeviceConnection = tempConnection
+                    printer.usbInterface = tempInterface
+                    printer.endPoint = outEndpoint
+
+                    // Send ESC/POS serial command
+                    val serialCmd = byteArrayOf(29, 73, 68)
+                    val sendResult = tempConnection.bulkTransfer(outEndpoint, serialCmd, serialCmd.size, 3000)
+
+                    if (sendResult >= 0) {
+                        Thread.sleep(500)
+                        val response = readSyncLikeSDK(printer, 3000)
+
+                        if (response != null && response.isNotEmpty()) {
+                            val cleanedSerial = String(response, Charsets.UTF_8)
+                                .replace(Regex("[\\x00-\\x1F\\x7F-\\xFF]"), "")
+                                .replace(Regex("[\\r\\n\\t]"), "")
+                                .trim()
+
+                            if (cleanedSerial.isNotEmpty()) {
+                                val newKey = getPrinterKey(printer.usbDevice.vendorId, printer.usbDevice.productId, cleanedSerial)
+                                Log.i(LOG_TAG, "discoverAllSerials: Upgrading key from '$key' to '$newKey'")
+
+                                discoveredPrinters.remove(key)
+                                discoveredPrinters[newKey] = printer
+
+                                results[printer.usbDevice.deviceId.toString()] = cleanedSerial
+                            }
+                        }
+                    } else {
+                        Log.e(LOG_TAG, "discoverAllSerials: Failed to send serial command to $key")
+                    }
+
+                } catch (e: Exception) {
+                    Log.e(LOG_TAG, "discoverAllSerials: Error discovering serial for $key", e)
+                } finally {
+                    try {
+                        if (tempConnection != null && tempInterface != null) {
+                            tempConnection.releaseInterface(tempInterface)
+                            tempConnection.close()
+                        }
+                        printer.usbDeviceConnection = null
+                        printer.usbInterface = null
+                        printer.endPoint = null
+                    } catch (e: Exception) {
+                        Log.w(LOG_TAG, "discoverAllSerials: Error cleaning up $key", e)
+                    }
+                }
+            }
+
+            Log.i(LOG_TAG, "discoverAllSerials: Complete. Found ${results.size} serials")
+            callback(results)
+        }.start()
     }
 
     fun selectDevice(vendorId: Int, productId: Int, serialNumber: String?): Boolean {
@@ -224,27 +381,16 @@ class USBPrinterAdapter {
             return true
         }
 
-        // Find the desired USB device
-        val usbDevices = getDeviceList()
-        val selectedDevice = if (serialNumber != null && serialNumber.isNotEmpty()) {
-            usbDevices.find { 
-                it.vendorId == vendorId && 
-                it.productId == productId &&
-                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    it.serialNumber == serialNumber
-                } else {
-                    false
-                })
-            }
-        } else {
-            usbDevices.find { it.vendorId == vendorId && it.productId == productId }
-        }
-        
-        if (selectedDevice != null) {
-            Log.v(LOG_TAG, "Requesting permission for device: $key")
-            mUSBManager!!.requestPermission(selectedDevice, mPermissionIntent)
+        // Find the device from discoveredPrinters by key
+        val discovered = discoveredPrinters[key]
+        if (discovered != null) {
+            Log.v(LOG_TAG, "Found device in discoveredPrinters for key: $key")
+            mUSBManager!!.requestPermission(discovered.usbDevice, mPermissionIntent)
             return true
         }
+
+        Log.w(LOG_TAG, "selectDevice: No device found for key: $key")
+        Log.i(LOG_TAG, "selectDevice: Available keys: ${discoveredPrinters.keys}")
         return false
     }
 
