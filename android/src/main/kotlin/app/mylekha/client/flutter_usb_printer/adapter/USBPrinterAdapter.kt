@@ -107,8 +107,9 @@ class USBPrinterAdapter {
                     Log.w(LOG_TAG, "Detached: No matching entry for deviceId=${usbDevice.deviceId}")
                 }
             } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED == action) {
-                // Assign temp key with new deviceId — serial will be discovered later
-                val usbSerial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                // Only use USB serial for Sewoo — all others need ESC/POS discovery
+                val isSewoo = usbDevice.productName?.startsWith("POS Receipt Printer") == true
+                val usbSerial = if (isSewoo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     usbDevice.serialNumber
                 } else {
                     null
@@ -123,7 +124,7 @@ class USBPrinterAdapter {
                 discoveredPrinters[key] = PrinterConnection(usbDevice, null, null, null)
                 Log.i(LOG_TAG, "Attached: Added device with key: $key (deviceId=${usbDevice.deviceId})")
 
-                // Auto-discover serial for newly attached device if it has a temp key
+                // Auto-discover serial for non-Sewoo printers
                 if (key.contains(":dev")) {
                     Log.i(LOG_TAG, "Attached: Auto-discovering serial for $key")
                     discoverAllSerials { serials ->
@@ -198,38 +199,33 @@ class USBPrinterAdapter {
 
         val devices = ArrayList(mUSBManager!!.deviceList.values)
 
-        // Store discovered printers with appropriate keys
-        // Printers with USB serial get full key: vendorId:productId:serial
-        // Printers without USB serial get temporary key: vendorId:productId:deviceId
-        // deviceId is unique per USB port, so duplicate models won't collide
+        // Clear non-Sewoo entries — they'll be re-discovered with fresh temp keys
+        // then upgraded by discoverAllSerials. This prevents stale USB serial keys
+        // from being preserved for printers that should use ESC/POS serials.
+        val sewooKeys = discoveredPrinters.entries
+            .filter { it.value.usbDevice.productName?.startsWith("POS Receipt Printer") == true }
+            .map { it.key }
+            .toSet()
+        discoveredPrinters.keys.retainAll(sewooKeys)
+
         devices.forEach { device ->
-            val usbSerial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            val isSewoo = device.productName?.startsWith("POS Receipt Printer") == true
+            val usbSerial = if (isSewoo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 device.serialNumber
             } else {
                 null
             }
 
             if (usbSerial != null && usbSerial.isNotEmpty()) {
-                // Has USB serial — use it directly
+                // Sewoo with USB serial — use it directly
                 val key = getPrinterKey(device.vendorId, device.productId, usbSerial)
                 discoveredPrinters[key] = PrinterConnection(device, null, null, null)
                 Log.i(LOG_TAG, "Discovered printer: ${device.productName} with key: $key (USB serial)")
             } else {
-                // No USB serial — check if we already have an ESC/POS serial key for this specific device
-                val existingKey = discoveredPrinters.entries.find { (_, conn) ->
-                    conn.usbDevice.deviceId == device.deviceId
-                }?.key
-
-                if (existingKey != null) {
-                    // Preserve existing key, update device reference
-                    discoveredPrinters[existingKey] = PrinterConnection(device, null, null, null)
-                    Log.i(LOG_TAG, "Preserving key: $existingKey for deviceId=${device.deviceId}")
-                } else {
-                    // Use deviceId as temporary differentiator
-                    val tempKey = "${device.vendorId}:${device.productId}:dev${device.deviceId}"
-                    discoveredPrinters[tempKey] = PrinterConnection(device, null, null, null)
-                    Log.i(LOG_TAG, "Discovered printer: ${device.productName} with temp key: $tempKey (no serial yet)")
-                }
+                // Non-Sewoo — always use temp key, discoverAllSerials will upgrade
+                val tempKey = "${device.vendorId}:${device.productId}:dev${device.deviceId}"
+                discoveredPrinters[tempKey] = PrinterConnection(device, null, null, null)
+                Log.i(LOG_TAG, "Discovered printer: ${device.productName} with temp key: $tempKey")
             }
         }
 
@@ -396,11 +392,11 @@ class USBPrinterAdapter {
 
     fun openConnection(vendorId: Int, productId: Int, serialNumber: String?): Boolean {
     val key = if (serialNumber != null && serialNumber.isNotEmpty()) {
-        getPrinterKey(vendorId, productId, serialNumber)  // Exact match
+        getPrinterKey(vendorId, productId, serialNumber)
     } else {
-        findPrinterKey(vendorId, productId) ?: return false  
+        findPrinterKey(vendorId, productId) ?: return false
     }
-    
+
     val printer = printerConnections[key] ?: return false
 
     val usbInterface = printer.usbDevice.getInterface(0)
