@@ -258,11 +258,27 @@ class USBPrinterAdapter {
 
             Log.i(LOG_TAG, "discoverAllSerials: ${printersNeedingSerial.size} printers need serial discovery")
 
+            // USB device classes that are NOT printers
+            val nonPrinterClasses = setOf(0, 2, 3, 9, 14, 224) // Default, Comm, HID, Hub, Video, Wireless
+
             for ((key, printer) in printersNeedingSerial) {
                 var tempConnection: UsbDeviceConnection? = null
                 var tempInterface: UsbInterface? = null
 
                 try {
+                    // Skip non-printer devices by checking device class and interface class
+                    val deviceClass = printer.usbDevice.deviceClass
+                    val interfaceClass = if (printer.usbDevice.interfaceCount > 0) {
+                        printer.usbDevice.getInterface(0).interfaceClass
+                    } else { -1 }
+                    // Only allow printer class (7) or vendor specific (255)
+                    val isPrinterLike = deviceClass == 7 || deviceClass == 255 ||
+                        interfaceClass == 7 || interfaceClass == 255
+                    if (!isPrinterLike) {
+                        Log.i(LOG_TAG, "discoverAllSerials: Skipping non-printer device $key (deviceClass=$deviceClass, interfaceClass=$interfaceClass, name=${printer.usbDevice.productName})")
+                        continue
+                    }
+
                     if (mUSBManager == null) continue
                     if (!mUSBManager!!.hasPermission(printer.usbDevice)) {
                         Log.i(LOG_TAG, "discoverAllSerials: No permission for $key, requesting...")

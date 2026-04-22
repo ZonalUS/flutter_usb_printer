@@ -124,9 +124,13 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
 
           // Use ESC/POS serial if discovered, otherwise USB serial, otherwise unknown
           val escPosSerial = serials[deviceId]
-          val usbSerial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            usbDevice.serialNumber
-          } else {
+          val usbSerial = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+              usbDevice.serialNumber
+            } else {
+              null
+            }
+          } catch (e: SecurityException) {
             null
           }
           deviceMap["serial_number"] = escPosSerial ?: usbSerial ?: "unknown"
