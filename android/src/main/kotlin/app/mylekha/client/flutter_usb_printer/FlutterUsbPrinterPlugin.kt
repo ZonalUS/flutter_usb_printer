@@ -85,9 +85,12 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
        // testAllPrinterInfo(vendorId!!, productId!!, result)
         }
         "getPrinterStatus" -> {
-        val vendorId = call.argument<Int>("vendorId")
-        val productId = call.argument<Int>("productId")
-      //  getPrinterStatus(vendorId!!, productId!!, result)
+          val vendorId = call.argument<Int>("vendorId")
+          val productId = call.argument<Int>("productId")
+          val serialNumber = call.argument<String>("serialNumber") // Optional parameter
+          val request = call.argument<ByteArray>("request")
+          val timeoutMs = call.argument<Int>("timeoutMs") ?: 600
+          getPrinterStatus(vendorId!!, productId!!, serialNumber, request!!, timeoutMs, result)
         }
 
         
@@ -191,6 +194,14 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("SERIAL_ERROR", "Could not retrieve printer serial number", null)
             }
         }
+    }
+  }
+
+  private fun getPrinterStatus(
+      vendorId: Int, productId: Int, serial: String?, request: ByteArray, timeoutMs: Int, result: Result) {
+    adapter!!.getPrinterStatus(vendorId, productId, serial, request, timeoutMs) { reply ->
+      // The adapter answers on a background thread; reply on the main thread.
+      activity.runOnUiThread { result.success(reply) }
     }
   }
 

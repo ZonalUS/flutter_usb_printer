@@ -97,6 +97,32 @@ class FlutterUsbPrinter {
     }
   }
 
+  /// [getPrinterStatus]
+  /// Send [request] (an ESC/POS real-time status request, DLE EOT n) to a
+  /// connected printer and return its reply bytes. Null when the printer
+  /// isn't connected or can't be asked; empty when it doesn't answer within
+  /// [timeoutMs].
+  Future<Uint8List?> getPrinterStatus(
+    int vendorId,
+    int productId,
+    String? serial,
+    Uint8List request, {
+    int timeoutMs = 600,
+  }) async {
+    try {
+      return await _channel.invokeMethod<Uint8List>('getPrinterStatus', {
+        'vendorId': vendorId,
+        'productId': productId,
+        'serialNumber': serial,
+        'request': request,
+        'timeoutMs': timeoutMs,
+      });
+    } on PlatformException catch (e) {
+      print("Error getting printer status: ${e.message}");
+      return null;
+    }
+  }
+
   Future<String?> getPrinterSerial(
       int vendorId, int productId, String? serial) async {
     try {
@@ -129,16 +155,4 @@ class FlutterUsbPrinter {
     }
   }
 
-  Future<String?> getPrinterStatus(int vendorId, int productId) async {
-    try {
-      final String? status = await _channel.invokeMethod('getPrinterStatus', {
-        'vendorId': vendorId,
-        'productId': productId,
-      });
-      return status;
-    } on PlatformException catch (e) {
-      print("Error getting serial number: ${e.message}");
-      return null;
-    }
-  }
 }
