@@ -85,9 +85,12 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
        // testAllPrinterInfo(vendorId!!, productId!!, result)
         }
         "getPrinterStatus" -> {
-        val vendorId = call.argument<Int>("vendorId")
-        val productId = call.argument<Int>("productId")
-      //  getPrinterStatus(vendorId!!, productId!!, result)
+          val vendorId = call.argument<Int>("vendorId")
+          val productId = call.argument<Int>("productId")
+          val serialNumber = call.argument<String>("serialNumber") // Optional parameter
+          val request = call.argument<ByteArray>("request")
+          val timeoutMs = call.argument<Int>("timeoutMs") ?: 600
+          getPrinterStatus(vendorId!!, productId!!, serialNumber, request!!, timeoutMs, result)
         }
 
         
@@ -176,8 +179,12 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
  private fun write(vendorId: Int, productId: Int, serialNumber: String?, bytes: ByteArray?, result: Result) {
     Log.i("DEBUG", "Plugin write called with: vendorId=$vendorId, productId=$productId, serial=$serialNumber")
     bytes?.let {
-        val success = adapter!!.write(vendorId, productId, serialNumber, it)
-        result.success(success)
+        // Replies once the transfer has finished, with whether it went
+        // through, not as soon as it has started (AcePOS OS-3315).
+        val started = adapter!!.write(vendorId, productId, serialNumber, it) { ok ->
+            activity.runOnUiThread { result.success(ok) }
+        }
+        if (!started) result.success(false)
     } ?: result.error("ERROR", "Bytes cannot be null", null)
 }
 
@@ -191,6 +198,14 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
                 result.error("SERIAL_ERROR", "Could not retrieve printer serial number", null)
             }
         }
+    }
+  }
+
+  private fun getPrinterStatus(
+      vendorId: Int, productId: Int, serial: String?, request: ByteArray, timeoutMs: Int, result: Result) {
+    adapter!!.getPrinterStatus(vendorId, productId, serial, request, timeoutMs) { reply ->
+      // The adapter answers on a background thread; reply on the main thread.
+      activity.runOnUiThread { result.success(reply) }
     }
   }
 

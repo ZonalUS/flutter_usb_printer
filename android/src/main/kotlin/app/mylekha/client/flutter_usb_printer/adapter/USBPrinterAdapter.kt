@@ -509,7 +509,20 @@ class USBPrinterAdapter {
         }
     }
 
-    fun write(vendorId: Int, productId: Int, serialNumber: String?, bytes: ByteArray): Boolean {
+    /**
+     * Write [bytes] to the printer on a background thread. Returns whether
+     * the transfer was started (a connection was found). [onDone], when
+     * given, is told once whether the transfer actually went through
+     * (AcePOS OS-3315: a ticket the printer didn't take must not count as
+     * printed). Without [onDone] the transfer keeps the old 100 s timeout.
+     */
+    fun write(
+        vendorId: Int,
+        productId: Int,
+        serialNumber: String?,
+        bytes: ByteArray,
+        onDone: ((Boolean) -> Unit)? = null
+    ): Boolean {
         val key = if (serialNumber != null && serialNumber.isNotEmpty()) {
             getPrinterKey(vendorId, productId, serialNumber)
         } else {
@@ -553,14 +566,21 @@ class USBPrinterAdapter {
         // Check if the printer is connected
         if (printer.usbDeviceConnection != null && printer.endPoint != null) {
             Thread {
-                val status = printer.usbDeviceConnection!!.bulkTransfer(
-                    printer.endPoint, bytes, bytes.size, 100000
-                )
-                Log.i(LOG_TAG, "Write Status: $status")
-
-                if (status < 0) {
-                    Log.e(LOG_TAG, "Failed to write to printer: $key")
+                var status = -1
+                try {
+                    status = printer.usbDeviceConnection!!.bulkTransfer(
+                        printer.endPoint, bytes, bytes.size,
+                        if (onDone == null) 100000 else 10000
+                    )
+                    Log.i(LOG_TAG, "Write Status: $status")
+                    if (status < 0) {
+                        Log.e(LOG_TAG, "Failed to write to printer: $key")
+                    }
+                } catch (e: Exception) {
+                    Log.e(LOG_TAG, "Write to printer failed: $key", e)
                 }
+                // Outside the try: told exactly once, whatever happened.
+                onDone?.invoke(status >= 0)
             }.start()
             return true
         } else {
@@ -788,6 +808,113 @@ class USBPrinterAdapter {
             Log.e(LOG_TAG, "Empty or null ESC/POS response")
             callback(null)
         }
+    }
+
+    /**
+     * Ask a connected printer for its real-time status: write [request]
+     * (ESC/POS DLE EOT n) on the OUT endpoint and return what the printer
+     * answers on the IN endpoint within [timeoutMs].
+     *
+     * Null when the printer isn't connected, has no IN endpoint or the write
+     * fails; empty when it doesn't answer. [callback] runs on a background
+     * thread. Used by AcePOS to catch paper-out and cover-open (OS-3315).
+     */
+    fun getPrinterStatus(
+        vendorId: Int,
+        productId: Int,
+        serialNumber: String?,
+        request: ByteArray,
+        timeoutMs: Int,
+        callback: (ByteArray?) -> Unit
+    ) {
+        val key = if (serialNumber != null && serialNumber.isNotEmpty()) {
+            getPrinterKey(vendorId, productId, serialNumber)
+        } else {
+            findPrinterKey(vendorId, productId)
+        }
+        val printer = key?.let { printerConnections[it] }
+        if (printer?.usbDeviceConnection == null || printer.endPoint == null || printer.usbInterface == null) {
+            Log.w(LOG_TAG, "getPrinterStatus: not connected: $vendorId:$productId:$serialNumber")
+            callback(null)
+            return
+        }
+        Thread {
+            var answer: ByteArray? = null
+            try {
+                if (findInEndpoint(printer.usbInterface!!) == null) {
+                    Log.w(LOG_TAG, "getPrinterStatus: no IN endpoint for $key")
+                } else {
+                    // Anything still waiting on the IN endpoint (the tail of an
+                    // earlier serial request) would be read as the status reply.
+                    drainInput(printer)
+                    val sent = printer.usbDeviceConnection!!.bulkTransfer(
+                        printer.endPoint, request, request.size, 1000
+                    )
+                    if (sent < 0) {
+                        Log.w(LOG_TAG, "getPrinterStatus: request not sent to $key")
+                    } else {
+                        val reply = readStatusReplies(printer, expectedStatusReplies(request), timeoutMs)
+                        Log.i(LOG_TAG, "getPrinterStatus: $key replied ${reply.joinToString(" ") { "%02X".format(it) }}")
+                        answer = reply
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(LOG_TAG, "getPrinterStatus: failed for $key", e)
+            }
+            // Outside the try, so a reply that throws can't be sent twice.
+            callback(answer)
+        }.start()
+    }
+
+    /** Read and discard whatever the printer has already sent, up to 200 ms. */
+    private fun drainInput(printer: PrinterConnection) {
+        val inEndpoint = findInEndpoint(printer.usbInterface!!) ?: return
+        val startTime = System.currentTimeMillis()
+        var drained = 0
+        while (System.currentTimeMillis() - startTime < 200) {
+            val buffer = ByteArray(64)
+            val read = printer.usbDeviceConnection!!.bulkTransfer(inEndpoint, buffer, buffer.size, 20)
+            if (read <= 0) break
+            drained += read
+        }
+        if (drained > 0) Log.i(LOG_TAG, "getPrinterStatus: discarded $drained stale bytes")
+    }
+
+    /** One reply byte is expected per DLE EOT n (10 04 n) in [request]. */
+    private fun expectedStatusReplies(request: ByteArray): Int {
+        var count = 0
+        var i = 0
+        while (i + 1 < request.size) {
+            if (request[i] == 0x10.toByte() && request[i + 1] == 0x04.toByte()) {
+                count++
+                i += 3
+            } else {
+                i++
+            }
+        }
+        return maxOf(count, 1)
+    }
+
+    /**
+     * Read from the IN endpoint until [expected] bytes have arrived or
+     * [timeoutMs] passes. Unlike [readSyncLikeSDK], which returns on the first
+     * data, a printer answering several status requests can send its replies
+     * in separate transfers.
+     */
+    private fun readStatusReplies(printer: PrinterConnection, expected: Int, timeoutMs: Int): ByteArray {
+        val inEndpoint = findInEndpoint(printer.usbInterface!!) ?: return ByteArray(0)
+        val reply = java.io.ByteArrayOutputStream()
+        val startTime = System.currentTimeMillis()
+        while (reply.size() < expected && System.currentTimeMillis() - startTime < timeoutMs) {
+            val buffer = ByteArray(64)
+            val read = printer.usbDeviceConnection!!.bulkTransfer(inEndpoint, buffer, buffer.size, 50)
+            if (read > 0) {
+                reply.write(buffer, 0, read)
+            } else {
+                Thread.sleep(20)
+            }
+        }
+        return reply.toByteArray()
     }
 
     private fun readSyncLikeSDK(printer: PrinterConnection, timeoutMs: Int): ByteArray? {
