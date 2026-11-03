@@ -179,8 +179,12 @@ class FlutterUsbPrinterPlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
  private fun write(vendorId: Int, productId: Int, serialNumber: String?, bytes: ByteArray?, result: Result) {
     Log.i("DEBUG", "Plugin write called with: vendorId=$vendorId, productId=$productId, serial=$serialNumber")
     bytes?.let {
-        val success = adapter!!.write(vendorId, productId, serialNumber, it)
-        result.success(success)
+        // Replies once the transfer has finished, with whether it went
+        // through, not as soon as it has started (AcePOS OS-3315).
+        val started = adapter!!.write(vendorId, productId, serialNumber, it) { ok ->
+            activity.runOnUiThread { result.success(ok) }
+        }
+        if (!started) result.success(false)
     } ?: result.error("ERROR", "Bytes cannot be null", null)
 }
 

@@ -509,7 +509,20 @@ class USBPrinterAdapter {
         }
     }
 
-    fun write(vendorId: Int, productId: Int, serialNumber: String?, bytes: ByteArray): Boolean {
+    /**
+     * Write [bytes] to the printer on a background thread. Returns whether
+     * the transfer was started (a connection was found). [onDone], when
+     * given, is told once whether the transfer actually went through
+     * (AcePOS OS-3315: a ticket the printer didn't take must not count as
+     * printed). Without [onDone] the transfer keeps the old 100 s timeout.
+     */
+    fun write(
+        vendorId: Int,
+        productId: Int,
+        serialNumber: String?,
+        bytes: ByteArray,
+        onDone: ((Boolean) -> Unit)? = null
+    ): Boolean {
         val key = if (serialNumber != null && serialNumber.isNotEmpty()) {
             getPrinterKey(vendorId, productId, serialNumber)
         } else {
@@ -553,14 +566,21 @@ class USBPrinterAdapter {
         // Check if the printer is connected
         if (printer.usbDeviceConnection != null && printer.endPoint != null) {
             Thread {
-                val status = printer.usbDeviceConnection!!.bulkTransfer(
-                    printer.endPoint, bytes, bytes.size, 100000
-                )
-                Log.i(LOG_TAG, "Write Status: $status")
-
-                if (status < 0) {
-                    Log.e(LOG_TAG, "Failed to write to printer: $key")
+                var status = -1
+                try {
+                    status = printer.usbDeviceConnection!!.bulkTransfer(
+                        printer.endPoint, bytes, bytes.size,
+                        if (onDone == null) 100000 else 10000
+                    )
+                    Log.i(LOG_TAG, "Write Status: $status")
+                    if (status < 0) {
+                        Log.e(LOG_TAG, "Failed to write to printer: $key")
+                    }
+                } catch (e: Exception) {
+                    Log.e(LOG_TAG, "Write to printer failed: $key", e)
                 }
+                // Outside the try: told exactly once, whatever happened.
+                onDone?.invoke(status >= 0)
             }.start()
             return true
         } else {
@@ -819,30 +839,30 @@ class USBPrinterAdapter {
             return
         }
         Thread {
+            var answer: ByteArray? = null
             try {
                 if (findInEndpoint(printer.usbInterface!!) == null) {
                     Log.w(LOG_TAG, "getPrinterStatus: no IN endpoint for $key")
-                    callback(null)
-                    return@Thread
+                } else {
+                    // Anything still waiting on the IN endpoint (the tail of an
+                    // earlier serial request) would be read as the status reply.
+                    drainInput(printer)
+                    val sent = printer.usbDeviceConnection!!.bulkTransfer(
+                        printer.endPoint, request, request.size, 1000
+                    )
+                    if (sent < 0) {
+                        Log.w(LOG_TAG, "getPrinterStatus: request not sent to $key")
+                    } else {
+                        val reply = readStatusReplies(printer, expectedStatusReplies(request), timeoutMs)
+                        Log.i(LOG_TAG, "getPrinterStatus: $key replied ${reply.joinToString(" ") { "%02X".format(it) }}")
+                        answer = reply
+                    }
                 }
-                // Anything still waiting on the IN endpoint (the tail of an
-                // earlier serial request) would be read as the status reply.
-                drainInput(printer)
-                val sent = printer.usbDeviceConnection!!.bulkTransfer(
-                    printer.endPoint, request, request.size, 1000
-                )
-                if (sent < 0) {
-                    Log.w(LOG_TAG, "getPrinterStatus: request not sent to $key")
-                    callback(null)
-                    return@Thread
-                }
-                val reply = readStatusReplies(printer, expectedStatusReplies(request), timeoutMs)
-                Log.i(LOG_TAG, "getPrinterStatus: $key replied ${reply.joinToString(" ") { "%02X".format(it) }}")
-                callback(reply)
             } catch (e: Exception) {
                 Log.e(LOG_TAG, "getPrinterStatus: failed for $key", e)
-                callback(null)
             }
+            // Outside the try, so a reply that throws can't be sent twice.
+            callback(answer)
         }.start()
     }
 
